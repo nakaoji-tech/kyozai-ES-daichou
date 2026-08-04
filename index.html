@@ -1351,9 +1351,30 @@ async function collectFullSnapshot(){
   return records;
 }
 
-function downloadTextFile(filename, content, mime){
-  const blob = new Blob([content], {type: mime});
+function isIOSDevice(){
+  const ua = navigator.userAgent || '';
+  const iOSLike = /iPad|iPhone|iPod/.test(ua);
+  // iPadOS 13+ は Mac 風の User-Agent を返すため、タッチ対応で判定を補う
+  const iPadOSMasquerade = (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return iOSLike || iPadOSMasquerade;
+}
+
+function downloadTextFile(filename, content){
+  // text/html などブラウザが「表示できる」MIMEタイプだと、保存の代わりにその場で
+  // 開こうとするブラウザがある（特にiOS Safari）。application/octet-stream にして
+  // 「未知のファイル＝ダウンロード対象」として扱わせるのが最も確実。
+  const blob = new Blob([content], {type: 'application/octet-stream'});
   const url = URL.createObjectURL(blob);
+
+  if(isIOSDevice()){
+    // iOS Safariは <a download> によるプログラム的な保存に対応していないことが多いため、
+    // 新しいタブでファイルを開き、共有ボタンから保存してもらう方式に切り替える。
+    window.open(url, '_blank');
+    showToast('開いたページ右上の共有ボタンから「ファイルに保存」を選んでください', {duration: 5000});
+    setTimeout(()=> URL.revokeObjectURL(url), 60000);
+    return;
+  }
+
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
@@ -1380,7 +1401,7 @@ async function exportArchive(yearLabel){
   html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>教材受注台帳（${esc(yearLabel)}アーカイブ）</title>`);
 
   const safeName = yearLabel.replace(/[\\/:*?"<>|]/g, '') || '無題';
-  downloadTextFile(`教材受注台帳（${safeName}アーカイブ）.html`, html, 'text/html');
+  downloadTextFile(`教材受注台帳（${safeName}アーカイブ）.html`, html);
 }
 
 function openArchiveDialog(){

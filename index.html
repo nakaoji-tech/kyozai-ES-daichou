@@ -748,6 +748,21 @@ body.archive-mode textarea:disabled{
   color:var(--ink);
   margin-bottom:16px;
 }
+#archiveDownloadLink{
+  display:block;
+  width:100%;
+  box-sizing:border-box;
+  text-align:center;
+  padding:13px 8px;
+  border-radius:8px;
+  background:var(--forest);
+  color:#fff;
+  font-weight:700;
+  font-size:14px;
+  text-decoration:none;
+  margin-bottom:12px;
+}
+#archiveDownloadLink:active{opacity:0.85;}
 #archiveButtons{display:flex; gap:8px;}
 #archiveButtons button{
   flex:1;
@@ -947,11 +962,20 @@ body.archive-mode textarea:disabled{
 
 <div id="archiveOverlay">
   <div id="archivePanel">
-    <div id="archiveMessage">現在の全学校・全学年のデータを、閲覧専用のアーカイブファイルとして書き出します。年度など分かりやすい名前を入力してください。</div>
-    <input type="text" id="archiveYearInput" placeholder="例：令和8年度" autocomplete="off">
-    <div id="archiveButtons">
-      <button id="archiveCancelBtn" type="button">キャンセル</button>
-      <button id="archiveOkBtn" type="button">書き出す</button>
+    <div id="archiveStepInput">
+      <div id="archiveMessage">現在の全学校・全学年のデータを、閲覧専用のアーカイブファイルとして書き出します。年度など分かりやすい名前を入力してください。</div>
+      <input type="text" id="archiveYearInput" placeholder="例：令和8年度" autocomplete="off">
+      <div id="archiveButtons">
+        <button id="archiveCancelBtn" type="button">キャンセル</button>
+        <button id="archiveOkBtn" type="button">書き出す</button>
+      </div>
+    </div>
+    <div id="archiveStepReady" style="display:none;">
+      <div id="archiveMessage">書き出しの準備ができました。下のボタンをタップして保存してください。</div>
+      <a id="archiveDownloadLink" href="#" download="">📥 ファイルを保存</a>
+      <div id="archiveButtons">
+        <button id="archiveDoneBtn" type="button">閉じる</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1361,17 +1385,22 @@ function isIOSDevice(){
 
 function downloadTextFile(filename, content){
   // text/html などブラウザが「表示できる」MIMEタイプだと、保存の代わりにその場で
-  // 開こうとするブラウザがある（特にiOS Safari）。application/octet-stream にして
+  // 開こうとするブラウザがある。application/octet-stream にして
   // 「未知のファイル＝ダウンロード対象」として扱わせるのが最も確実。
   const blob = new Blob([content], {type: 'application/octet-stream'});
   const url = URL.createObjectURL(blob);
 
   if(isIOSDevice()){
-    // iOS Safariは <a download> によるプログラム的な保存に対応していないことが多いため、
-    // 新しいタブでファイルを開き、共有ボタンから保存してもらう方式に切り替える。
-    window.open(url, '_blank');
-    showToast('開いたページ右上の共有ボタンから「ファイルに保存」を選んでください', {duration: 5000});
-    setTimeout(()=> URL.revokeObjectURL(url), 60000);
+    // iOS Safariは window.open() 経由のダウンロードだとファイル名(拡張子)が
+    // "Unknown" になってしまい保存後に開けなくなる。本物のユーザータップによる
+    // <a download> クリックであればファイル名が正しく保持されるため、
+    // ダイアログ内に実際にタップしてもらうリンクを表示する方式に切り替える。
+    const link = document.getElementById('archiveDownloadLink');
+    link.href = url;
+    link.download = filename;
+    link.textContent = `📥 ${filename} を保存`;
+    document.getElementById('archiveStepInput').style.display = 'none';
+    document.getElementById('archiveStepReady').style.display = 'block';
     return;
   }
 
@@ -1381,6 +1410,8 @@ function downloadTextFile(filename, content){
   document.body.appendChild(a);
   a.click();
   a.remove();
+  closeArchiveDialog();
+  showToast('書き出しました');
   setTimeout(()=> URL.revokeObjectURL(url), 4000);
 }
 
@@ -1410,6 +1441,8 @@ function openArchiveDialog(){
     showToast('学校が登録されていません');
     return;
   }
+  document.getElementById('archiveStepInput').style.display = 'block';
+  document.getElementById('archiveStepReady').style.display = 'none';
   const input = document.getElementById('archiveYearInput');
   input.value = '';
   document.getElementById('archiveOverlay').classList.add('open');
@@ -1417,6 +1450,10 @@ function openArchiveDialog(){
 }
 function closeArchiveDialog(){
   document.getElementById('archiveOverlay').classList.remove('open');
+  const link = document.getElementById('archiveDownloadLink');
+  if(link.href && link.href.indexOf('blob:')===0){
+    setTimeout(()=> URL.revokeObjectURL(link.href), 500);
+  }
 }
 
 // ---------------- BOTTOM DOTS ----------------
@@ -1909,20 +1946,23 @@ document.getElementById('deleteSchoolBtn').addEventListener('click', deleteCurre
 document.getElementById('colorCloseBtn').addEventListener('click', closeColorPicker);
 document.getElementById('exportArchiveBtn').addEventListener('click', openArchiveDialog);
 document.getElementById('archiveCancelBtn').addEventListener('click', closeArchiveDialog);
+document.getElementById('archiveDoneBtn').addEventListener('click', closeArchiveDialog);
 document.getElementById('archiveOverlay').addEventListener('click', (e)=>{
   if(e.target.id === 'archiveOverlay') closeArchiveDialog();
 });
 document.getElementById('archiveOkBtn').addEventListener('click', async ()=>{
   const yearLabel = document.getElementById('archiveYearInput').value.trim() || '無題';
-  closeArchiveDialog();
-  closeSearch();
+  const okBtn = document.getElementById('archiveOkBtn');
+  okBtn.disabled = true;
   showToast('アーカイブを作成中…');
   try{
     await exportArchive(yearLabel);
-    showToast('書き出しました');
+    // 非iOSはここまでで自動的にダウンロード＆ダイアログを閉じ終わっている。
+    // iOSは「保存」リンクを表示するステップへ進むので、ここでは何もしない。
   }catch(e){
     showToast('書き出しに失敗しました');
   }
+  okBtn.disabled = false;
 });
 document.getElementById('colorOverlay').addEventListener('click', (e)=>{
   if(e.target.id === 'colorOverlay') closeColorPicker();

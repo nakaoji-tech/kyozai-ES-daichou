@@ -323,6 +323,28 @@ input, textarea{
 }
 .chip.on{color:var(--hanko);font-weight:700;}
 .chip.on .ring{opacity:1;}
+
+/* ---------- 上下まとめ判子（長押しで結合） ---------- */
+.chippair{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  touch-action:manipulation;
+  -webkit-user-select:none;
+  user-select:none;
+}
+.chippair .pairring{
+  position:absolute;
+  inset:-4px -6px;
+  border:2.5px solid var(--hanko);
+  border-radius:48% 52% 46% 54% / 68% 60% 72% 56%;
+  transform:rotate(-2deg);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity 0.12s ease;
+}
+.chippair.paired .pairring{opacity:1;}
+.chippair.paired .chip{color:var(--hanko);font-weight:700;}
 .item-fields{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;}
 .field-mini{display:flex;align-items:center;gap:4px;}
 .field-mini label{font-size:10.5px;color:var(--ink-soft);}
@@ -1494,7 +1516,7 @@ function recordKey(p){
 }
 
 function defaultGradeData(){
-  return { teacher:'', chips:{}, dates:{}, counts:{}, classCounts:Array(8).fill(''), sample:{s:false,d:false,c:false}, returns:[], visits:[] };
+  return { teacher:'', chips:{}, pairChips:{}, dates:{}, counts:{}, classCounts:Array(8).fill(''), sample:{s:false,d:false,c:false}, returns:[], visits:[] };
 }
 function defaultMemoData(){
   return { entries:[] };
@@ -1565,6 +1587,20 @@ function renderChip(token, key, on){
   return `<span class="chip ${on?'on':''}" data-chipkey="${esc(key)}"><span class="ring"></span>${esc(token)}</span>`;
 }
 
+function renderChipPair(tokens, base, yearKey){
+  const k0 = `${base}-${yearKey}-0`;
+  const k1 = `${base}-${yearKey}-1`;
+  const pairKey = `${base}-${yearKey}`;
+  const on0 = !!currentData.chips[k0];
+  const on1 = !!currentData.chips[k1];
+  const paired = !!currentData.pairChips[pairKey] && on0 && on1;
+  return `<span class="chippair ${paired?'paired':''}" data-pairkey="${esc(pairKey)}">
+    <span class="pairring"></span>
+    <span class="chip ${(!paired && on0)?'on':''}" data-chipkey="${esc(k0)}"><span class="ring"></span>${esc(tokens[0])}</span>
+    <span class="chip ${(!paired && on1)?'on':''}" data-chipkey="${esc(k1)}"><span class="ring"></span>${esc(tokens[1])}</span>
+  </span>`;
+}
+
 function formatMD(iso){
   if(!iso) return '月/日';
   const parts = iso.split('-');
@@ -1595,18 +1631,26 @@ function renderGradePage(p){
       }
       if(item.r6 && item.r6.length){
         html += `<div class="chiprow"><input type="text" class="yearlabel-input" data-yearfield="r6" value="${esc(YEAR_LABELS.r6)}">`;
-        item.r6.forEach((t,ti)=>{
-          const k = `${base}-r6-${ti}`;
-          html += renderChip(t, k, !!currentData.chips[k]);
-        });
+        if(item.r6.length === 2){
+          html += renderChipPair(item.r6, base, 'r6');
+        } else {
+          item.r6.forEach((t,ti)=>{
+            const k = `${base}-r6-${ti}`;
+            html += renderChip(t, k, !!currentData.chips[k]);
+          });
+        }
         html += `</div>`;
       }
       if(item.r7 && item.r7.length){
         html += `<div class="chiprow"><input type="text" class="yearlabel-input" data-yearfield="r7" value="${esc(YEAR_LABELS.r7)}">`;
-        item.r7.forEach((t,ti)=>{
-          const k = `${base}-r7-${ti}`;
-          html += renderChip(t, k, !!currentData.chips[k]);
-        });
+        if(item.r7.length === 2){
+          html += renderChipPair(item.r7, base, 'r7');
+        } else {
+          item.r7.forEach((t,ti)=>{
+            const k = `${base}-r7-${ti}`;
+            html += renderChip(t, k, !!currentData.chips[k]);
+          });
+        }
         html += `</div>`;
       }
       const dateVal = currentData.dates[base] || '';
@@ -1732,13 +1776,67 @@ function wireEvents(p){
       input.dispatchEvent(new Event('input', {bubbles:true}));
     });
   });
-  // chips (上・下・年刊 etc — tap to stamp a circle)
-  pageTrack.querySelectorAll('[data-chipkey]').forEach(el=>{
+  // chips - 単独（年刊・色ノートなど）はタップのみでON/OFF
+  pageTrack.querySelectorAll('.chiprow > [data-chipkey]').forEach(el=>{
     el.addEventListener('click', ()=>{
       const k = el.dataset.chipkey;
       currentData.chips[k] = !currentData.chips[k];
       el.classList.toggle('on', currentData.chips[k]);
       scheduleSave();
+    });
+  });
+  // chips - 上/下ペアはタップで個別ON/OFF、長押しでまとめて丸める判子に
+  pageTrack.querySelectorAll('.chippair').forEach(pairEl=>{
+    const chipEls = [...pairEl.querySelectorAll('[data-chipkey]')];
+    if(chipEls.length !== 2) return;
+    const [chip0, chip1] = chipEls;
+    const key0 = chip0.dataset.chipkey;
+    const key1 = chip1.dataset.chipkey;
+    const pairKey = pairEl.dataset.pairkey;
+
+    function applyPairState(){
+      const paired = !!currentData.pairChips[pairKey] && !!currentData.chips[key0] && !!currentData.chips[key1];
+      pairEl.classList.toggle('paired', paired);
+      chip0.classList.toggle('on', !paired && !!currentData.chips[key0]);
+      chip1.classList.toggle('on', !paired && !!currentData.chips[key1]);
+    }
+    function shortTap(chipKey){
+      currentData.pairChips[pairKey] = false;
+      currentData.chips[chipKey] = !currentData.chips[chipKey];
+      applyPairState();
+      scheduleSave();
+    }
+    function longPress(){
+      const alreadyPaired = !!currentData.pairChips[pairKey] && !!currentData.chips[key0] && !!currentData.chips[key1];
+      if(alreadyPaired){
+        currentData.chips[key0] = false;
+        currentData.chips[key1] = false;
+        currentData.pairChips[pairKey] = false;
+      } else {
+        currentData.chips[key0] = true;
+        currentData.chips[key1] = true;
+        currentData.pairChips[pairKey] = true;
+      }
+      applyPairState();
+      scheduleSave();
+      if(navigator.vibrate) navigator.vibrate(12);
+    }
+
+    chipEls.forEach(chipEl=>{
+      let pressTimer = null;
+      let longFired = false;
+      chipEl.addEventListener('pointerdown', ()=>{
+        longFired = false;
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(()=>{ longFired = true; longPress(); }, 480);
+      });
+      chipEl.addEventListener('pointerup', ()=>{
+        clearTimeout(pressTimer);
+        if(!longFired) shortTap(chipEl.dataset.chipkey);
+      });
+      chipEl.addEventListener('pointerleave', ()=> clearTimeout(pressTimer));
+      chipEl.addEventListener('pointercancel', ()=> clearTimeout(pressTimer));
+      chipEl.addEventListener('click', (e)=>{ e.preventDefault(); }, true);
     });
   });
   // editable 年度ラベル (R6 / R7) — shared across the whole ledger

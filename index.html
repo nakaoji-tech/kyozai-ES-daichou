@@ -1464,9 +1464,9 @@ async function exportArchive(yearLabel){
   let html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
   html = html.replace(
     /<script id="data-archive" type="application\/json">[\s\S]*?<\/script>/,
-    `<script id="data-archive" type="application/json">${jsonStr}<\/script>`
+    ()=> `<script id="data-archive" type="application/json">${jsonStr}<\/script>`
   );
-  html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>教材受注台帳（${esc(yearLabel)}アーカイブ）</title>`);
+  html = html.replace(/<title>[\s\S]*?<\/title>/, ()=> `<title>教材受注台帳（${esc(yearLabel)}アーカイブ）</title>`);
 
   const safeName = yearLabel.replace(/[\\/:*?"<>|]/g, '') || '無題';
   downloadTextFile(`教材受注台帳（${safeName}アーカイブ）.html`, html);
